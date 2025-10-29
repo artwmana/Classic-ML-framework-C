@@ -127,6 +127,8 @@ int main() {
     cout << endl;
 
     cout << "MSE = " << MSE(data.y, y_pred) << endl;
+    cout << "MAE = " << MAE(data.y, y_pred) << endl;
+    cout << "MAPE = " << MAPE(data.y, y_pred) << endl;
 
     return 0;
 }

@@ -1,4 +1,5 @@
 #include <numeric>
+#include <cmath>
 #include "metrics.h"
 
 using namespace std;
@@ -8,10 +9,23 @@ double MSE(const vector<double>& y_true, const vector<double>& y_pred){
     //Implementation of MSE
     //MSE = 1/n ∑ (y_true - y_pred)^2
     //////////////////////////////////////////
-    double sum = 0;
+    double sum = 0.0;
     for(size_t i = 0; i < y_true.size(); i++){
         double diff = y_true[i]-y_pred[i];
         sum += diff * diff;
+    }
+
+    return sum / y_true.size();
+}
+
+double MAE(const vector<double>& y_true, const vector<double>& y_pred){
+    //////////////////////////////////////////
+    //Implementation of Mean absolute error
+    //MAE = 1/n ∑ |y_true - y_pred|
+    //////////////////////////////////////////
+    double sum = 0.0;
+    for(int i = 0; i<y_true.size(); i++){
+        sum += abs(y_true[i]-y_pred[i]);
     }
 
     return sum / y_true.size();
@@ -38,4 +52,17 @@ double R2(const vector<double>& y_true, const vector<double>& y_pred){
     }
 
     return 1.0 - (ss_res / ss_tot);
+}
+
+double MAPE(const vector<double>& y_true, const vector<double>& y_pred){
+    //////////////////////////////////////////
+    //Implementation of Mean absolute percentage error
+    //MAPE = 1/n ∑ |(y_pred-y_true)/y_true|
+    //////////////////////////////////////////
+    double sum = 0.0;
+    for(int i = 0; i < y_true.size();i++){
+        double diff = y_pred[i] - y_true[i];
+        sum += diff / y_true[i];
+    }
+    return sum / y_true.size();
 }
