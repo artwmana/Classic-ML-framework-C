@@ -1,8 +1,14 @@
+#include <algorithm>
 #include <cmath>
 #include <iostream>
+#include <iomanip>
+#include <fstream>
+#include <limits>
 #include <stdexcept>
+#include <string>
 #include <vector>
 #include "utils/data_generation.h"
+#include "utils/math.h"
 #include "utils/metrics.h"
 
 using namespace std;
@@ -10,82 +16,76 @@ using namespace std;
 vector<double> normal_equation_fit(const Dataset& data) {
     //////////////////////////////////////////
     //Fits linear regression weights via the normal equation.
-    //y = b + w_1*x_1 + w_2*x_2 + ...
-    //Computes (X^T X)^(-1) X^T y using Gauss-Jordan elimination.
+    //Equivalent to np.sum(((np.linalg.inv(X.T@X)))@X.T@y * X, axis=1)
+    //after algebraic simplification.
     //////////////////////////////////////////
-    const int n_samples = static_cast<int>(data.X.size());
+    if (data.X.empty()) {
+        throw invalid_argument("Dataset is empty");
+    }
+    if (data.X[0].empty()) {
+        throw invalid_argument("Dataset must contain at least one feature");
+    }
+
+    const vector<vector<double>> X_design = add_bias_column(data.X);
+    const vector<vector<double>> Xt = transpose(X_design);
+    const vector<vector<double>> XtX = matmul(Xt, X_design);
+    const vector<vector<double>> XtX_inv = invert(XtX);
+    const vector<double> XtY = matvec(Xt, data.y);
+
+    return matvec(XtX_inv, XtY);
+}
+
+vector<double> gradient_descent_fit(const Dataset& data, double learning_rate, int max_iters, double tolerance) {
+    //////////////////////////////////////////
+    //Fits linear regression weights by minimizing MSE
+    //with batch gradient descent.
+    //////////////////////////////////////////
+    const size_t n_samples = data.X.size();
     if (n_samples == 0) {
         throw invalid_argument("Dataset is empty");
     }
-    const int n_features = static_cast<int>(data.X[0].size());
+    const size_t n_features = data.X[0].size();
+    if (n_features == 0) {
+        throw invalid_argument("Dataset must contain at least one feature");
+    }
 
-    // XtX and Xty for augmented matrix with bias term.
-    vector<vector<double>> XtX(n_features + 1, vector<double>(n_features + 1, 0.0));
-    vector<double> Xty(n_features + 1, 0.0);
+    const vector<vector<double>> X_design = add_bias_column(data.X);
+    const vector<vector<double>> Xt = transpose(X_design);
+    vector<double> weights(n_features + 1, 0.0);
 
-    for (int i = 0; i < n_samples; ++i) {
-        vector<double> row(n_features + 1, 1.0);
-        for (int j = 0; j < n_features; ++j) {
-            row[j + 1] = data.X[i][j];
+    double previous_loss = numeric_limits<double>::infinity();
+    for (int iter = 0; iter < max_iters; ++iter) {
+        vector<double> predictions = matvec(X_design, weights);
+        vector<double> errors(n_samples, 0.0);
+
+        double loss = 0.0;
+        for (size_t i = 0; i < n_samples; ++i) {
+            errors[i] = predictions[i] - data.y[i];
+            loss += errors[i] * errors[i];
+        }
+        loss /= static_cast<double>(n_samples);
+
+        if (fabs(previous_loss - loss) < tolerance) {
+            break;
+        }
+        previous_loss = loss;
+
+        vector<double> gradient = matvec(Xt, errors);
+        const double scale = 2.0 / static_cast<double>(n_samples);
+
+        double max_update = 0.0;
+        for (size_t j = 0; j < gradient.size(); ++j) {
+            gradient[j] *= scale;
+            const double update = learning_rate * gradient[j];
+            weights[j] -= update;
+            max_update = max(max_update, fabs(update));
         }
 
-        for (int a = 0; a < n_features + 1; ++a) {
-            Xty[a] += row[a] * data.y[i];
-            for (int b = 0; b < n_features + 1; ++b) {
-                XtX[a][b] += row[a] * row[b];
-            }
+        if (max_update < tolerance) {
+            break;
         }
     }
 
-    //Solve XtX * w = Xty using Gauss-Jordan elimination.
-    const double eps = 1e-12;
-    vector<vector<double>> augmented(n_features + 1, vector<double>(n_features + 2, 0.0));
-    for (int i = 0; i < n_features + 1; ++i) {
-        for (int j = 0; j < n_features + 1; ++j) {
-            augmented[i][j] = XtX[i][j];
-        }
-        augmented[i][n_features + 1] = Xty[i];
-    }
-
-    for (int col = 0; col < n_features + 1; ++col) {
-        int pivot_row = col;
-        double max_val = fabs(augmented[col][col]);
-        for (int row = col + 1; row < n_features + 1; ++row) {
-            const double current_val = fabs(augmented[row][col]);
-            if (current_val > max_val) {
-                max_val = current_val;
-                pivot_row = row;
-            }
-        }
-
-        if (max_val < eps) {
-            throw runtime_error("Design matrix is singular; cannot solve normal equation");
-        }
-
-        if (pivot_row != col) {
-            swap(augmented[pivot_row], augmented[col]);
-        }
-
-        const double pivot = augmented[col][col];
-        for (int j = col; j < n_features + 2; ++j) {
-            augmented[col][j] /= pivot;
-        }
-
-        for (int row = 0; row < n_features + 1; ++row) {
-            if (row == col) {
-                continue;
-            }
-            const double factor = augmented[row][col];
-            for (int j = col; j < n_features + 2; ++j) {
-                augmented[row][j] -= factor * augmented[col][j];
-            }
-        }
-    }
-
-    vector<double> weights(n_features + 1);
-    for (int i = 0; i < n_features + 1; ++i) {
-        weights[i] = augmented[i][n_features + 1];
-    }
     return weights;
 }
 
@@ -94,41 +94,95 @@ vector<double> predict(const Dataset& data, const vector<double>& weights) {
     //Applies learned weights (bias + feature coefficients)
     //to produce predictions for each sample.
     //////////////////////////////////////////
-    const int n_samples = static_cast<int>(data.X.size());
-    const int n_features = static_cast<int>(weights.size()) - 1;
-    vector<double> predictions(n_samples);
-
-    for (int i = 0; i < n_samples; ++i) {
-        double value = weights[0];  // bias term
-        for (int j = 0; j < n_features; ++j) {
-            value += weights[j + 1] * data.X[i][j];
-        }
-        predictions[i] = value;
+    if (weights.empty()) {
+        throw invalid_argument("Weights vector is empty");
+    }
+    if (data.X.empty()) {
+        return {};
+    }
+    if (weights.size() != data.X[0].size() + 1) {
+        throw invalid_argument("Weights size must equal number of features plus bias");
     }
 
-    return predictions;
+    const vector<vector<double>> design = add_bias_column(data.X);
+    return matvec(design, weights);
 }
 
-int main() {
-    //////////////////////////////////////////
-    //Entry point: generate synthetic data, fit model,
-    //print learned parameters and quality metric.
-    //////////////////////////////////////////
-    Dataset data = get_data(200, 3, 5.0, 10.0, 2.5);
+namespace {
+bool file_exists(const string& path) {
+    ifstream in(path);
+    return in.good();
+}
 
-    vector<double> weights = normal_equation_fit(data);
-    vector<double> y_pred = predict(data, weights);
-
-    cout << "Learned bias: " << weights[0] << endl;
-    cout << "Learned weights:";
-    for (size_t i = 1; i < weights.size(); ++i) {
-        cout << " " << weights[i];
+string resolve_dataset_path(const string& candidate, const char* argv0) {
+    if (file_exists(candidate)) {
+        return candidate;
     }
-    cout << endl;
+    if (argv0 != nullptr) {
+        string exe_path(argv0);
+        const size_t slash = exe_path.find_last_of("/\\");
+        if (slash != string::npos) {
+            string alternative = exe_path.substr(0, slash + 1) + candidate;
+            if (file_exists(alternative)) {
+                return alternative;
+            }
+        }
+    }
+    return candidate;
+}
+}  // namespace
 
-    cout << "MSE = " << MSE(data.y, y_pred) << endl;
-    cout << "MAE = " << MAE(data.y, y_pred) << endl;
-    cout << "MAPE = " << MAPE(data.y, y_pred) << endl;
+int main(int argc, char* argv[]) {
+    //////////////////////////////////////////
+    //Entry point: generate synthetic data, fit model
+    //with two approaches, and report metrics.
+    //////////////////////////////////////////
+    const string default_path = "Classic-ML-framework-C/data/dataset.csv";
+    const string dataset_path = resolve_dataset_path((argc > 1) ? argv[1] : default_path, argv[0]);
+    Dataset data;
+    try {
+        data = load_dataset_from_csv(dataset_path, /*target_first=*/true);
+        cout << "Loaded dataset from " << dataset_path << endl;
+    } catch (const exception& e) {
+        cerr << "Failed to load dataset from " << dataset_path << ": " << e.what() << endl;
+        cerr << "Ensure the Python notebook exports a CSV with target in the first column and features after it." << endl;
+        return 1;
+    }
+
+    const double learning_rate = 0.01;
+    const int max_iters = 20000;
+    const double tolerance = 1e-8;
+
+    vector<double> normal_weights = normal_equation_fit(data);
+    vector<double> normal_pred = predict(data, normal_weights);
+
+    vector<double> gd_weights = gradient_descent_fit(data, learning_rate, max_iters, tolerance);
+    vector<double> gd_pred = predict(data, gd_weights);
+
+    auto print_weights = [](const vector<double>& weights) {
+        cout << "bias = " << weights.front() << ", weights:";
+        for (size_t i = 1; i < weights.size(); ++i) {
+            cout << " " << weights[i];
+        }
+        cout << endl;
+    };
+
+    auto print_metrics = [&](const vector<double>& preds) {
+        cout << "MSE = " << MSE(data.y, preds)
+             << ", MAE = " << MAE(data.y, preds)
+             << ", MAPE = " << MAPE(data.y, preds)
+             << ", R2 = " << R2(data.y, preds) << endl;
+    };
+
+    cout << fixed << setprecision(4);
+
+    cout << "Normal equation solution:" << endl;
+    print_weights(normal_weights);
+    print_metrics(normal_pred);
+
+    cout << "\nGradient descent solution:" << endl;
+    print_weights(gd_weights);
+    print_metrics(gd_pred);
 
     return 0;
 }
