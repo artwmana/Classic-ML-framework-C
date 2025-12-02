@@ -16,7 +16,7 @@ using namespace std;
 vector<double> normal_equation_fit(const Dataset& data) {
     //////////////////////////////////////////
     //Fits linear regression weights via the normal equation.
-    //Equivalent to np.sum(((np.linalg.inv(X.T@X)))@X.T@y * X, axis=1)
+    //w = (X^T * X)^-1 * X.T * y
     //after algebraic simplification.
     //////////////////////////////////////////
     if (data.X.empty()) {
@@ -141,8 +141,7 @@ int main(int argc, char* argv[]) {
     const string dataset_path = resolve_dataset_path((argc > 1) ? argv[1] : default_path, argv[0]);
     Dataset data;
     try {
-        data = load_dataset_from_csv(dataset_path, /*target_first=*/true);
-        cout << "Loaded dataset from " << dataset_path << endl;
+        data = get_data(100, 2, 0.1, 2, 3.5, 42);
     } catch (const exception& e) {
         cerr << "Failed to load dataset from " << dataset_path << ": " << e.what() << endl;
         cerr << "Ensure the Python notebook exports a CSV with target in the first column and features after it." << endl;
